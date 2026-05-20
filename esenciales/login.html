@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Login / Sign Up to EchoSearch</title>
+
+<!-- Bootstrap 5 CSS -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/css/bootstrap.min.css" rel="stylesheet">
+
+<!-- Firebase SDK v8 -->
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
+<script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
+
+<!-- NEW Google Identity Services -->
+<script src="https://accounts.google.com/gsi/client" async defer></script>
+
+</head>
+<body class="bg-light d-flex align-items-center" style="min-height: 100vh;">
+
+<div class="container">
+  <div class="row justify-content-center">
+    <div class="col-md-5 col-lg-4">
+      <div class="card shadow-sm">
+        <div class="card-body">
+          <h2 class="card-title text-center mb-4">EchoSearch</h2>
+          <p id="auth-status" class="text-center">Please sign in or sign up.</p>
+
+          <div id="auth-forms">
+
+            <!-- Email Section -->
+            <h5 class="mb-3">Sign In / Sign Up with Email</h5>
+            <div class="mb-2">
+              <input type="email" id="email" class="form-control" placeholder="Email" required>
+            </div>
+            <div class="mb-2">
+              <input type="password" id="password" class="form-control" placeholder="Password" required>
+            </div>
+            <button class="btn btn-success w-100 mb-2" onclick="signInEmailPassword()">Sign In with Email</button>
+            <div class="text-end mb-2">
+              <a href="#" onclick="resetPassword(); return false;">Forgot password?</a>
+            </div>
+            <button class="btn btn-primary w-100 mb-3" onclick="signUpEmailPassword()">Sign Up with Email</button>
+
+            <hr>
+
+            <!-- Phone Section -->
+            <h5 class="mb-3">Sign In / Sign Up with Phone</h5>
+            <div class="mb-2">
+              <input type="tel" id="phoneNumber" class="form-control" placeholder="+15551234567" required>
+            </div>
+            <div id="recaptcha-container" class="mb-2"></div>
+            <button class="btn btn-primary w-100 mb-2" id="sendCodeBtn" onclick="sendVerificationCode()" disabled>Send Verification Code</button>
+            <div id="verificationCodeSection" class="mb-2 d-none">
+              <input type="text" id="verificationCode" class="form-control mb-2" placeholder="Enter Verification Code" required>
+              <button class="btn btn-primary w-100" onclick="signInWithPhoneNumber()">Verify Code & Sign In</button>
+            </div>
+
+            <hr>
+
+            <!-- Google Sign-In (GIS Button) -->
+            <h5 class="mb-3">Or use Google</h5>
+
+            <!-- GIS onload -->
+            <div 
+              id="g_id_onload"
+              data-client_id="202629312430-9e0k5efjjk22tu88lpootisaus8gsqv9.apps.googleusercontent.com"
+              data-context="signin"
+              data-ux_mode="popup"
+              data-callback="handleGoogleCredential"
+              data-auto_prompt="false">
+            </div>
+
+            <!-- GIS button -->
+            <div 
+              class="g_id_signin w-100"
+              data-type="standard"
+              data-size="large"
+              data-theme="filled_blue"
+              data-shape="rectangular"
+              data-text="sign_in_with"
+              data-logo_alignment="left">
+            </div>
+
+          </div>
+
+          <!-- Sign Out -->
+          <div id="sign-out-section" class="d-none mt-3">
+            <button class="btn btn-secondary w-100" onclick="signOutUser()">Sign Out</button>
+          </div>
+
+          <p id="message" class="mt-3 text-center"></p>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Bootstrap 5 JS bundle -->
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.2/dist/js/bootstrap.bundle.min.js"></script>
+
+<script>
+/* ---------------------------
+   Firebase Init
+----------------------------*/
+const firebaseConfig = {
+ apiKey: "AIzaSyBsJcShq-p4kDcRYyas_fYdWN7VWvgRi_I",
+ authDomain: "echosearchh.firebaseapp.com",
+ projectId: "echosearchh",
+ storageBucket: "echosearchh.firebasestorage.app",
+ messagingSenderId: "202629312430",
+ appId: "1:202629312430:web:1895b1e1b0bd508f86223f"
+};
+firebase.initializeApp(firebaseConfig);
+const auth = firebase.auth();
+
+const emailInput = document.getElementById('email');
+const passwordInput = document.getElementById('password');
+const phoneNumberInput = document.getElementById('phoneNumber');
+const verificationCodeInput = document.getElementById('verificationCode');
+const verificationCodeSection = document.getElementById('verificationCodeSection');
+const sendCodeBtn = document.getElementById('sendCodeBtn');
+
+const messageElement = document.getElementById('message');
+const authStatusElement = document.getElementById('auth-status');
+const authForms = document.getElementById('auth-forms');
+const signOutSection = document.getElementById('sign-out-section');
+
+let recaptchaVerifier;
+let confirmationResult;
+
+/* ---------------------------
+   UI helper functions
+----------------------------*/
+function displayMessage(msg, isError = true) {
+    messageElement.textContent = msg;
+    messageElement.className = isError ? 'text-danger mt-3 text-center' : 'text-success mt-3 text-center';
+}
+
+function getFriendlyErrorMessage(error) {
+    switch(error.code) {
+        case 'auth/invalid-email': return "Invalid email address.";
+        case 'auth/user-not-found': return "No user found with this email.";
+        case 'auth/wrong-password': return "Incorrect password.";
+        case 'auth/email-already-in-use': return "Email already registered.";
+        case 'auth/weak-password': return "Password should be at least 6 characters.";
+        case 'auth/invalid-phone-number': return "Invalid phone number.";
+        case 'auth/missing-phone-number': return "Enter a phone number.";
+        case 'auth/too-many-requests': return "Too many requests. Try again later.";
+        case 'auth/invalid-verification-code': return "Invalid verification code.";
+        case 'auth/code-expired': return "Verification code expired.";
+        default: return `Error: ${error.message}`;
+    }
+}
+
+/* ---------------------------
+   Email Auth
+----------------------------*/
+function signInEmailPassword() {
+    auth.signInWithEmailAndPassword(emailInput.value, passwordInput.value)
+    .then(() => displayMessage("Signed in successfully!", false))
+    .catch(err => displayMessage(getFriendlyErrorMessage(err)));
+}
+
+function signUpEmailPassword() {
+    auth.createUserWithEmailAndPassword(emailInput.value, passwordInput.value)
+    .then(() => displayMessage("Account created successfully!", false))
+    .catch(err => displayMessage(getFriendlyErrorMessage(err)));
+}
+
+function resetPassword() {
+    auth.sendPasswordResetEmail(emailInput.value)
+    .then(() => displayMessage("Password reset email sent!", false))
+    .catch(err => displayMessage(getFriendlyErrorMessage(err)));
+}
+
+/* ---------------------------
+   Google Sign-In (NEW GIS)
+----------------------------*/
+function handleGoogleCredential(response) {
+    const jwt = response.credential;
+
+    // Convert Google JWT → Firebase Credential
+    const firebaseCred = firebase.auth.GoogleAuthProvider.credential(jwt);
+
+    auth.signInWithCredential(firebaseCred)
+      .then(() => displayMessage("Signed in with Google!", false))
+      .catch(err => displayMessage(getFriendlyErrorMessage(err)));
+}
+
+/* ---------------------------
+   Phone Auth
+----------------------------*/
+function initializeRecaptcha() {
+    recaptchaVerifier = new firebase.auth.RecaptchaVerifier('recaptcha-container', {
+        'size': 'normal',
+        'callback': () => sendCodeBtn.disabled = false,
+        'expired-callback': () => { sendCodeBtn.disabled = true; }
+    });
+    recaptchaVerifier.render();
+}
+
+function sendVerificationCode() {
+    confirmationResult = null;
+    auth.signInWithPhoneNumber(phoneNumberInput.value, recaptchaVerifier)
+    .then(result => {
+        confirmationResult = result;
+        verificationCodeSection.classList.remove('d-none');
+        displayMessage("Verification code sent!", false);
+    })
+    .catch(err => displayMessage(getFriendlyErrorMessage(err)));
+}
+
+function signInWithPhoneNumber() {
+    if (!confirmationResult) return displayMessage("Request a verification code first.");
+    confirmationResult.confirm(verificationCodeInput.value)
+    .then(() => displayMessage("Signed in with phone!", false))
+    .catch(err => displayMessage(getFriendlyErrorMessage(err)));
+}
+
+/* ---------------------------
+   Sign Out
+----------------------------*/
+function signOutUser() {
+    auth.signOut().then(() => displayMessage("Signed out successfully!", false));
+}
+
+/* ---------------------------
+   Auth State Listener
+----------------------------*/
+auth.onAuthStateChanged(user => {
+    if (user) {
+        authStatusElement.innerHTML = `Welcome, <span class="text-success">${user.displayName || user.email || user.phoneNumber}</span>`;
+        authForms.classList.add('d-none');
+        signOutSection.classList.remove('d-none');
+    } else {
+        authStatusElement.textContent = "Please sign in or sign up.";
+        authForms.classList.remove('d-none');
+        signOutSection.classList.add('d-none');
+    }
+});
+
+window.onload = initializeRecaptcha;
+</script>
+</body>
+</html>
